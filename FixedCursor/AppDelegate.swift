@@ -18,7 +18,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create Edit menu for Cmd shortcuts
         setupMainMenu()
 
-        // Register global hotkey (Cmd+Shift+Space)
+        // Register global hotkey (Ctrl+Tab)
         registerGlobalHotKey()
 
         // Check accessibility permissions
@@ -68,7 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Open (Cmd+Shift+Space)", action: #selector(toggleOverlay), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Open (Ctrl+Tab)", action: #selector(toggleOverlay), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -78,9 +78,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Global Hotkey
 
     func registerGlobalHotKey() {
-        // Cmd+Shift+Space
-        let modifiers: UInt32 = UInt32(cmdKey | shiftKey)
-        let keyCode: UInt32 = 49 // Space key
+        // Ctrl+Tab
+        let modifiers: UInt32 = UInt32(controlKey)
+        let keyCode: UInt32 = 48 // Tab key
 
         var hotKeyID = EventHotKeyID()
         hotKeyID.signature = OSType(0x4658_4358) // "FXCX"

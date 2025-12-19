@@ -216,14 +216,6 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
                     return nil
                 }
 
-                // Tab = select all
-                if nsEvent.keyCode == 48 {
-                    DispatchQueue.main.async {
-                        controller.textView.selectAll(nil)
-                    }
-                    return nil
-                }
-
                 // Forward to textView on main thread
                 DispatchQueue.main.async {
                     // Cmd shortcuts go through menu's performKeyEquivalent
