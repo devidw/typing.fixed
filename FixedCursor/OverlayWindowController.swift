@@ -63,6 +63,12 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         textView.isHorizontallyResizable = false
         textView.textContainerInset = NSSize(width: 0, height: 0)
 
+        // Double the line height
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineHeightMultiple = 1.5
+        textView.defaultParagraphStyle = paragraphStyle
+        textView.typingAttributes[.paragraphStyle] = paragraphStyle
+
         containerView.addSubview(textView)
         contentView.addSubview(containerView)
     }
@@ -113,13 +119,14 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         let centerX = windowFrame.width / 2
         let centerY = windowFrame.height / 2
 
-        // Get line height from font
+        // Fallback line height from font (with multiplier)
         let font = textView.font ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        let lineHeight = font.ascender - font.descender + font.leading
+        let fontLineHeight = (font.ascender - font.descender + font.leading) * 1.5
 
         let cursorIndex = textView.selectedRange().location
         var cursorX: CGFloat = 0
         var cursorY: CGFloat = 0
+        var lineHeight: CGFloat = fontLineHeight
 
         let numGlyphs = layoutManager.numberOfGlyphs
 
@@ -131,6 +138,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             // Cursor at end of text
             let lastGlyphIndex = numGlyphs - 1
             let lineRect = layoutManager.lineFragmentRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil)
+            lineHeight = lineRect.height
             let glyphRange = NSRange(location: lastGlyphIndex, length: 1)
             let boundingRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
 
@@ -148,6 +156,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             // Cursor in middle of text
             let glyphIndex = layoutManager.glyphIndexForCharacter(at: cursorIndex)
             let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            lineHeight = lineRect.height
             let location = layoutManager.location(forGlyphAt: glyphIndex)
             cursorX = lineRect.origin.x + location.x
             cursorY = lineRect.origin.y
