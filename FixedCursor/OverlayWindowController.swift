@@ -6,7 +6,8 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     private var containerView: NSView!
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var draftText: String = ""  // Stores text when dismissed with Escape
+    private var bufferManager = BufferManager()
+    private var bufferIndicatorContainer: NSStackView!
 
     let fontSize: CGFloat = 24
 
@@ -28,7 +29,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         panel.hidesOnDeactivate = false
 
         setupTextView(in: panel)
-        setupHintLabel(in: panel)
+        setupBufferIndicator(in: panel)
     }
 
     private func setupTextView(in panel: NSPanel) {
@@ -73,27 +74,72 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         contentView.addSubview(containerView)
     }
 
-    private func setupHintLabel(in panel: NSPanel) {
+    private func setupBufferIndicator(in panel: NSPanel) {
         guard let contentView = panel.contentView else { return }
 
-        let label = NSTextField(labelWithString: "Cmd+Enter to insert | Esc to cancel")
-        label.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
-        label.textColor = NSColor.gray.withAlphaComponent(0.5)
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(label)
+        bufferIndicatorContainer = NSStackView()
+        bufferIndicatorContainer.orientation = .horizontal
+        bufferIndicatorContainer.spacing = 8
+        bufferIndicatorContainer.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(bufferIndicatorContainer)
 
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -40)
+            bufferIndicatorContainer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            bufferIndicatorContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -40)
         ])
+    }
+
+    private func updateBufferIndicator() {
+        // Remove existing views
+        for view in bufferIndicatorContainer.arrangedSubviews.reversed() {
+            bufferIndicatorContainer.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        let count = bufferManager.bufferCount
+        let current = bufferManager.currentIndex
+        let size: CGFloat = 20
+
+        for i in 0..<count {
+            let square = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+            square.wantsLayer = true
+
+            let label = NSTextField(frame: NSRect(x: 0, y: 0, width: size, height: size))
+            label.stringValue = "\(i + 1)"
+            label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+            label.alignment = .center
+            label.textColor = NSColor.white.withAlphaComponent(0.7)
+            label.isBordered = false
+            label.isEditable = false
+            label.drawsBackground = false
+            label.backgroundColor = .clear
+
+            if i == current {
+                square.layer?.borderColor = NSColor.white.withAlphaComponent(0.7).cgColor
+                square.layer?.borderWidth = 1
+            }
+
+            square.addSubview(label)
+
+            square.translatesAutoresizingMaskIntoConstraints = false
+            label.translatesAutoresizingMaskIntoConstraints = false
+
+            NSLayoutConstraint.activate([
+                square.widthAnchor.constraint(equalToConstant: size),
+                square.heightAnchor.constraint(equalToConstant: size),
+                label.centerXAnchor.constraint(equalTo: square.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: square.centerYAnchor)
+            ])
+
+            bufferIndicatorContainer.addArrangedSubview(square)
+        }
     }
 
     func show() {
         appLog("show() called")
 
-        // Restore draft text if available, otherwise start empty
-        textView.string = draftText
+        // Restore buffer content
+        textView.string = bufferManager.activeBuffer?.content ?? ""
 
         if let screen = NSScreen.main {
             window?.setFrame(screen.frame, display: true)
@@ -105,11 +151,13 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         let responderResult = window?.makeFirstResponder(textView)
         appLog("makeFirstResponder result: \(String(describing: responderResult)), firstResponder: \(String(describing: window?.firstResponder))")
 
-        // Move cursor to end of text
-        textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
+        // Restore cursor position or move to end
+        let cursorPos = bufferManager.activeBuffer?.cursorPosition ?? textView.string.count
+        textView.setSelectedRange(NSRange(location: min(cursorPos, textView.string.count), length: 0))
 
         // Initial positioning
         repositionTextView()
+        updateBufferIndicator()
 
         startInterceptingKeys()
         appLog("show() completed")
@@ -119,6 +167,9 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         guard let windowFrame = window?.frame else { return }
         guard let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else { return }
+
+        // Ensure layout is complete before accessing glyphs
+        layoutManager.ensureLayout(for: textContainer)
 
         let centerX = windowFrame.width / 2
         let centerY = windowFrame.height / 2
@@ -140,9 +191,14 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             cursorY = 0
         } else if cursorIndex >= textView.string.count {
             // Cursor at end of text
-            let lastGlyphIndex = numGlyphs - 1
+            let lastGlyphIndex = max(0, numGlyphs - 1)
+            guard lastGlyphIndex < numGlyphs else {
+                cursorX = 0
+                cursorY = 0
+                return
+            }
             let lineRect = layoutManager.lineFragmentRect(forGlyphAt: lastGlyphIndex, effectiveRange: nil)
-            lineHeight = lineRect.height
+            lineHeight = lineRect.height > 0 ? lineRect.height : fontLineHeight
             let glyphRange = NSRange(location: lastGlyphIndex, length: 1)
             let boundingRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
 
@@ -157,10 +213,16 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
                 cursorY = lineRect.origin.y
             }
         } else {
-            // Cursor in middle of text
+            // Cursor in middle of text - safely get glyph index
             let glyphIndex = layoutManager.glyphIndexForCharacter(at: cursorIndex)
+            guard glyphIndex < numGlyphs else {
+                cursorX = 0
+                cursorY = 0
+                containerView.frame.origin = CGPoint(x: centerX, y: windowFrame.height - centerY - containerView.frame.height)
+                return
+            }
             let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
-            lineHeight = lineRect.height
+            lineHeight = lineRect.height > 0 ? lineRect.height : fontLineHeight
             let location = layoutManager.location(forGlyphAt: glyphIndex)
             cursorX = lineRect.origin.x + location.x
             cursorY = lineRect.origin.y
@@ -174,19 +236,89 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         containerView.frame.origin = CGPoint(x: offsetX, y: windowFrame.height - offsetY - containerView.frame.height)
     }
 
+    // MARK: - Buffer Operations
+
+    func createNewBuffer() {
+        // Save current buffer
+        bufferManager.updateCurrentBuffer(
+            content: textView.string,
+            cursorPosition: textView.selectedRange().location
+        )
+        // Create new buffer and switch to it
+        bufferManager.createBuffer()
+        textView.string = ""
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        repositionTextView()
+        updateBufferIndicator()
+    }
+
+    func closeCurrentBuffer() {
+        guard bufferManager.bufferCount > 1 else { return }
+
+        bufferManager.closeCurrentBuffer()
+        // Load the new active buffer
+        textView.string = bufferManager.activeBuffer?.content ?? ""
+        let cursorPos = bufferManager.activeBuffer?.cursorPosition ?? 0
+        textView.setSelectedRange(NSRange(location: min(cursorPos, textView.string.count), length: 0))
+        repositionTextView()
+        updateBufferIndicator()
+    }
+
+    func switchToNextBuffer() {
+        guard bufferManager.bufferCount > 1 else { return }
+
+        // Save current buffer
+        bufferManager.updateCurrentBuffer(
+            content: textView.string,
+            cursorPosition: textView.selectedRange().location
+        )
+        // Switch to next buffer
+        bufferManager.switchToNextBuffer()
+        // Load the new active buffer
+        textView.string = bufferManager.activeBuffer?.content ?? ""
+        let cursorPos = bufferManager.activeBuffer?.cursorPosition ?? 0
+        textView.setSelectedRange(NSRange(location: min(cursorPos, textView.string.count), length: 0))
+        repositionTextView()
+        updateBufferIndicator()
+    }
+
+    func switchToBuffer(at index: Int) {
+        guard index < bufferManager.bufferCount else { return }
+        guard index != bufferManager.currentIndex else { return }
+
+        // Save current buffer
+        bufferManager.updateCurrentBuffer(
+            content: textView.string,
+            cursorPosition: textView.selectedRange().location
+        )
+        // Switch to specific buffer
+        bufferManager.switchToBuffer(at: index)
+        // Load the new active buffer
+        textView.string = bufferManager.activeBuffer?.content ?? ""
+        let cursorPos = bufferManager.activeBuffer?.cursorPosition ?? 0
+        textView.setSelectedRange(NSRange(location: min(cursorPos, textView.string.count), length: 0))
+        repositionTextView()
+        updateBufferIndicator()
+    }
+
     func dismiss(insertText: Bool) {
         appLog("dismiss() called, insertText: \(insertText)")
         stopInterceptingKeys()
 
+        // Save current buffer state
+        bufferManager.updateCurrentBuffer(
+            content: textView.string,
+            cursorPosition: textView.selectedRange().location
+        )
+
         if insertText {
-            // Proper submit - clear draft and return text
+            // Proper submit - clear buffer content and return text
             let text = textView.string
-            draftText = ""
+            bufferManager.updateCurrentBuffer(content: "", cursorPosition: 0)
             window?.orderOut(nil)
             onDismiss?(text)
         } else {
-            // Escape - save draft for later restoration
-            draftText = textView.string
+            // Escape - buffer already saved above
             window?.orderOut(nil)
             onDismiss?("")
         }
@@ -196,6 +328,32 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     // MARK: - NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
+        // Strip emojis to prevent CoreText crashes
+        let text = textView.string
+        let stripped = text.unicodeScalars.filter { scalar in
+            // Keep basic ASCII, extended Latin, and common symbols
+            // Exclude emoji ranges
+            !(scalar.value >= 0x1F600 && scalar.value <= 0x1F64F) && // Emoticons
+            !(scalar.value >= 0x1F300 && scalar.value <= 0x1F5FF) && // Misc Symbols and Pictographs
+            !(scalar.value >= 0x1F680 && scalar.value <= 0x1F6FF) && // Transport and Map
+            !(scalar.value >= 0x1F1E0 && scalar.value <= 0x1F1FF) && // Flags
+            !(scalar.value >= 0x2600 && scalar.value <= 0x26FF) &&   // Misc symbols
+            !(scalar.value >= 0x2700 && scalar.value <= 0x27BF) &&   // Dingbats
+            !(scalar.value >= 0x1F900 && scalar.value <= 0x1F9FF) && // Supplemental Symbols
+            !(scalar.value >= 0x1FA00 && scalar.value <= 0x1FA6F) && // Chess Symbols
+            !(scalar.value >= 0x1FA70 && scalar.value <= 0x1FAFF) && // Symbols Extended-A
+            !(scalar.value >= 0xFE00 && scalar.value <= 0xFE0F) &&   // Variation Selectors
+            !(scalar.value >= 0x200D && scalar.value <= 0x200D)      // Zero Width Joiner
+        }
+        let newText = String(String.UnicodeScalarView(stripped))
+
+        if newText != text {
+            let cursorPos = textView.selectedRange().location
+            textView.string = newText
+            let newPos = min(cursorPos, newText.count)
+            textView.setSelectedRange(NSRange(location: newPos, length: 0))
+        }
+
         repositionTextView()
     }
 
@@ -254,6 +412,46 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
                     appLog("eventTap: Ctrl+Tab pressed, dismissing")
                     DispatchQueue.main.async {
                         controller.dismiss(insertText: false)
+                    }
+                    return nil
+                }
+
+                // Check for Ctrl+T (new buffer)
+                if nsEvent.modifierFlags.contains(.control) && nsEvent.keyCode == 17 {
+                    appLog("eventTap: Ctrl+T pressed, creating new buffer")
+                    DispatchQueue.main.async {
+                        controller.createNewBuffer()
+                    }
+                    return nil
+                }
+
+                // Check for Ctrl+W (close buffer)
+                if nsEvent.modifierFlags.contains(.control) && nsEvent.keyCode == 13 {
+                    appLog("eventTap: Ctrl+W pressed, closing buffer")
+                    DispatchQueue.main.async {
+                        controller.closeCurrentBuffer()
+                    }
+                    return nil
+                }
+
+                // Check for Ctrl+1-9 (switch to specific buffer)
+                // Key codes: 1=18, 2=19, 3=20, 4=21, 5=23, 6=22, 7=26, 8=28, 9=25
+                if nsEvent.modifierFlags.contains(.control) {
+                    let numberKeyCodes: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
+                    if let bufferIndex = numberKeyCodes[nsEvent.keyCode] {
+                        appLog("eventTap: Ctrl+\(bufferIndex + 1) pressed, switching to buffer \(bufferIndex + 1)")
+                        DispatchQueue.main.async {
+                            controller.switchToBuffer(at: bufferIndex)
+                        }
+                        return nil
+                    }
+                }
+
+                // Check for Tab (switch buffer) - only Tab without modifiers
+                if nsEvent.keyCode == 48 && !nsEvent.modifierFlags.contains(.control) && !nsEvent.modifierFlags.contains(.command) && !nsEvent.modifierFlags.contains(.option) {
+                    appLog("eventTap: Tab pressed, switching buffer")
+                    DispatchQueue.main.async {
+                        controller.switchToNextBuffer()
                     }
                     return nil
                 }
