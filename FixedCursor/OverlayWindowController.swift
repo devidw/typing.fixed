@@ -222,6 +222,14 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
                     return nil
                 }
 
+                // Check for Ctrl+Tab (toggle hotkey)
+                if nsEvent.modifierFlags.contains(.control) && nsEvent.keyCode == 48 {
+                    DispatchQueue.main.async {
+                        controller.dismiss(insertText: false)
+                    }
+                    return nil
+                }
+
                 // Check for Cmd+Enter
                 if nsEvent.modifierFlags.contains(.command) && nsEvent.keyCode == 36 {
                     DispatchQueue.main.async {
