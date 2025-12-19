@@ -6,6 +6,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     private var containerView: NSView!
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var draftText: String = ""  // Stores text when dismissed with Escape
 
     let fontSize: CGFloat = 24
 
@@ -83,7 +84,8 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     }
 
     func show() {
-        textView.string = ""
+        // Restore draft text if available, otherwise start empty
+        textView.string = draftText
 
         if let screen = NSScreen.main {
             window?.setFrame(screen.frame, display: true)
@@ -93,6 +95,9 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(textView)
+
+        // Move cursor to end of text
+        textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
 
         // Initial positioning
         repositionTextView()
@@ -159,9 +164,18 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     func dismiss(insertText: Bool) {
         stopInterceptingKeys()
 
-        let text = insertText ? textView.string : ""
-        window?.orderOut(nil)
-        onDismiss?(text)
+        if insertText {
+            // Proper submit - clear draft and return text
+            let text = textView.string
+            draftText = ""
+            window?.orderOut(nil)
+            onDismiss?(text)
+        } else {
+            // Escape - save draft for later restoration
+            draftText = textView.string
+            window?.orderOut(nil)
+            onDismiss?("")
+        }
     }
 
     // MARK: - NSTextViewDelegate
