@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fixed Cursor Typewriter</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 24px;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    #cursor {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 2px;
+      height: 1em;
+      background: #fff;
+      transform: translateY(-50%);
+      animation: blink 1s step-end infinite;
+      z-index: 100;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      50.01%, 100% { opacity: 0; }
+    }
+
+    #text {
+      position: fixed;
+      white-space: pre;
+      line-height: 1.5;
+    }
+
+    #measure {
+      position: absolute;
+      visibility: hidden;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <div id="cursor"></div>
+  <div id="text"></div>
+  <span id="measure">M</span>
+
+  <script>
+    const textEl = document.getElementById('text');
+    const measureEl = document.getElementById('measure');
+
+    let lines = [''];
+    let row = 0;
+    let col = 0;
+
+    // Measure actual character dimensions
+    function getCharSize() {
+      const rect = measureEl.getBoundingClientRect();
+      return { w: rect.width, h: rect.height * 1.5 }; // 1.5 for line-height
+    }
+
+    function render() {
+      textEl.textContent = lines.join('\n');
+
+      const { w, h } = getCharSize();
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+
+      // Position text so that cursor position (col, row) is at screen center
+      const x = centerX - (col * w);
+      const y = centerY - (row * h) - (h / 2);
+
+      textEl.style.left = x + 'px';
+      textEl.style.top = y + 'px';
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey) return;
+
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (col > 0) {
+          lines[row] = lines[row].slice(0, col - 1) + lines[row].slice(col);
+          col--;
+        } else if (row > 0) {
+          const text = lines[row];
+          lines.splice(row, 1);
+          row--;
+          col = lines[row].length;
+          lines[row] += text;
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const after = lines[row].slice(col);
+        lines[row] = lines[row].slice(0, col);
+        lines.splice(row + 1, 0, after);
+        row++;
+        col = 0;
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (col > 0) col--;
+        else if (row > 0) { row--; col = lines[row].length; }
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (col < lines[row].length) col++;
+        else if (row < lines.length - 1) { row++; col = 0; }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (row > 0) { row--; col = Math.min(col, lines[row].length); }
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (row < lines.length - 1) { row++; col = Math.min(col, lines[row].length); }
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        lines[row] = lines[row].slice(0, col) + '    ' + lines[row].slice(col);
+        col += 4;
+      } else if (e.key.length === 1) {
+        e.preventDefault();
+        lines[row] = lines[row].slice(0, col) + e.key + lines[row].slice(col);
+        col++;
+      }
+
+      render();
+    });
+
+    window.addEventListener('resize', render);
+    render();
+  </script>
+</body>
+</html>
