@@ -90,6 +90,8 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     }
 
     func show() {
+        appLog("show() called")
+
         // Restore draft text if available, otherwise start empty
         textView.string = draftText
 
@@ -100,7 +102,8 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         // Activate app and focus
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        window?.makeFirstResponder(textView)
+        let responderResult = window?.makeFirstResponder(textView)
+        appLog("makeFirstResponder result: \(String(describing: responderResult)), firstResponder: \(String(describing: window?.firstResponder))")
 
         // Move cursor to end of text
         textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
@@ -109,6 +112,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         repositionTextView()
 
         startInterceptingKeys()
+        appLog("show() completed")
     }
 
     private func repositionTextView() {
@@ -171,6 +175,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     }
 
     func dismiss(insertText: Bool) {
+        appLog("dismiss() called, insertText: \(insertText)")
         stopInterceptingKeys()
 
         if insertText {
@@ -185,6 +190,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             window?.orderOut(nil)
             onDismiss?("")
         }
+        appLog("dismiss() completed")
     }
 
     // MARK: - NSTextViewDelegate
@@ -200,6 +206,8 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     // MARK: - CGEventTap
 
     private func startInterceptingKeys() {
+        appLog("startInterceptingKeys() called, existing eventTap: \(String(describing: eventTap))")
+
         let eventMask = (1 << CGEventType.keyDown.rawValue)
 
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
@@ -210,21 +218,31 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, userInfo) -> Unmanaged<CGEvent>? in
-                guard let userInfo = userInfo else { return Unmanaged.passRetained(event) }
+                guard let userInfo = userInfo else {
+                    appLog("eventTap callback: userInfo is nil")
+                    return Unmanaged.passRetained(event)
+                }
 
                 let controller = Unmanaged<OverlayWindowController>.fromOpaque(userInfo).takeUnretainedValue()
 
                 guard controller.window?.isVisible == true else {
+                    appLog("eventTap callback: window not visible, passing through")
                     return Unmanaged.passRetained(event)
                 }
 
                 // Convert to NSEvent
                 guard let nsEvent = NSEvent(cgEvent: event) else {
+                    appLog("eventTap callback: failed to convert CGEvent to NSEvent")
                     return Unmanaged.passRetained(event)
                 }
 
+                let keyCode = nsEvent.keyCode
+                let modifiers = nsEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                appLog("eventTap callback: keyCode=\(keyCode), modifiers=\(modifiers.rawValue)")
+
                 // Check for Escape
                 if nsEvent.keyCode == 53 {
+                    appLog("eventTap: Escape pressed, dismissing")
                     DispatchQueue.main.async {
                         controller.dismiss(insertText: false)
                     }
@@ -233,6 +251,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
 
                 // Check for Ctrl+Tab (toggle hotkey)
                 if nsEvent.modifierFlags.contains(.control) && nsEvent.keyCode == 48 {
+                    appLog("eventTap: Ctrl+Tab pressed, dismissing")
                     DispatchQueue.main.async {
                         controller.dismiss(insertText: false)
                     }
@@ -241,6 +260,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
 
                 // Check for Cmd+Enter
                 if nsEvent.modifierFlags.contains(.command) && nsEvent.keyCode == 36 {
+                    appLog("eventTap: Cmd+Enter pressed, submitting")
                     DispatchQueue.main.async {
                         controller.dismiss(insertText: true)
                     }
@@ -249,9 +269,26 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
 
                 // Forward to textView on main thread
                 DispatchQueue.main.async {
-                    // Cmd shortcuts go through menu's performKeyEquivalent
                     if nsEvent.modifierFlags.contains(.command) {
-                        NSApp.mainMenu?.performKeyEquivalent(with: nsEvent)
+                        // Handle Cmd shortcuts directly on textView
+                        switch nsEvent.keyCode {
+                        case 0:  // A - Select All
+                            controller.textView.selectAll(nil)
+                        case 6:  // Z - Undo/Redo
+                            if nsEvent.modifierFlags.contains(.shift) {
+                                controller.textView.undoManager?.redo()
+                            } else {
+                                controller.textView.undoManager?.undo()
+                            }
+                        case 7:  // X - Cut
+                            controller.textView.cut(nil)
+                        case 8:  // C - Copy
+                            controller.textView.copy(nil)
+                        case 9:  // V - Paste
+                            controller.textView.paste(nil)
+                        default:
+                            break
+                        }
                     } else {
                         controller.textView.keyDown(with: nsEvent)
                     }
@@ -261,7 +298,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             },
             userInfo: userInfo
         ) else {
-            print("Failed to create event tap")
+            appLog("ERROR: Failed to create event tap!")
             return
         }
 
@@ -270,22 +307,31 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
 
         if let source = runLoopSource {
             CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+            appLog("Added run loop source")
+        } else {
+            appLog("ERROR: Failed to create run loop source!")
         }
 
         CGEvent.tapEnable(tap: tap, enable: true)
+        appLog("startInterceptingKeys() completed, eventTap: \(String(describing: eventTap))")
     }
 
     private func stopInterceptingKeys() {
+        appLog("stopInterceptingKeys() called, eventTap: \(String(describing: eventTap)), runLoopSource: \(String(describing: runLoopSource))")
+
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
+            appLog("Disabled event tap")
         }
 
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            appLog("Removed run loop source")
         }
 
         eventTap = nil
         runLoopSource = nil
+        appLog("stopInterceptingKeys() completed")
     }
 }
 

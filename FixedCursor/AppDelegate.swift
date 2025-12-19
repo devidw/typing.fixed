@@ -12,6 +12,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var previousFocusedElement: AXUIElement?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        appLog("App launching...")
+
         // Create menu bar item
         setupStatusItem()
 
@@ -29,6 +31,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlayWindowController?.onDismiss = { [weak self] text in
             self?.insertTextAndRestore(text)
         }
+
+        appLog("App launched. Log file: \(Logger.shared.logPath)")
     }
 
     func setupMainMenu() {
@@ -78,6 +82,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Global Hotkey
 
     func registerGlobalHotKey() {
+        appLog("Registering global hotkey (Ctrl+Tab)...")
+
         // Ctrl+Tab
         let modifiers: UInt32 = UInt32(controlKey)
         let keyCode: UInt32 = 48 // Tab key
@@ -91,14 +97,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         eventType.eventKind = UInt32(kEventHotKeyPressed)
 
         // Install handler
-        InstallEventHandler(GetApplicationEventTarget(), { (_, event, userData) -> OSStatus in
+        let handlerResult = InstallEventHandler(GetApplicationEventTarget(), { (_, event, userData) -> OSStatus in
             let appDelegate = Unmanaged<AppDelegate>.fromOpaque(userData!).takeUnretainedValue()
+            appLog("Global hotkey triggered (Ctrl+Tab)")
             appDelegate.toggleOverlay()
             return noErr
         }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), nil)
 
+        appLog("InstallEventHandler result: \(handlerResult)")
+
         // Register hotkey
-        RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        let registerResult = RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+        appLog("RegisterEventHotKey result: \(registerResult), hotKeyRef: \(String(describing: hotKeyRef))")
     }
 
     // MARK: - Accessibility
@@ -129,9 +139,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Overlay Control
 
     @objc func toggleOverlay() {
-        if overlayWindowController?.window?.isVisible == true {
+        let isVisible = overlayWindowController?.window?.isVisible == true
+        appLog("toggleOverlay called, isVisible: \(isVisible)")
+
+        if isVisible {
+            appLog("Dismissing overlay")
             overlayWindowController?.dismiss(insertText: false)
         } else {
+            appLog("Showing overlay")
             storePreviousFocus()
             overlayWindowController?.show()
         }
