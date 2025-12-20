@@ -60,6 +60,9 @@ EOF
 # Move to Applications
 mv "$APP_BUNDLE" "$INSTALL_PATH"
 
+# Code sign to preserve accessibility permissions across rebuilds
+codesign --force --sign "FixedCursor Dev" "$INSTALL_PATH"
+
 echo "Installed to $INSTALL_PATH"
 
 # Launch the app
