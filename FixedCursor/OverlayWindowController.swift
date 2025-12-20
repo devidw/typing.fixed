@@ -1,7 +1,8 @@
 import Cocoa
 
 class OverlayWindowController: NSWindowController, NSTextViewDelegate {
-    var onDismiss: ((String) -> Void)?
+    /// Callback when dismissing. Parameters: text to insert, completion handler (true = success, clear buffer)
+    var onDismiss: ((String, @escaping (Bool) -> Void) -> Void)?
     private var textView: NSTextView!
     private var containerView: NSView!
     private var eventTap: CFMachPort?
@@ -312,15 +313,21 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         )
 
         if insertText {
-            // Proper submit - clear buffer content and return text
             let text = textView.string
-            bufferManager.updateCurrentBuffer(content: "", cursorPosition: 0)
             window?.orderOut(nil)
-            onDismiss?(text)
+            onDismiss?(text) { [weak self] success in
+                if success {
+                    // Only clear buffer if insertion target was valid
+                    self?.bufferManager.updateCurrentBuffer(content: "", cursorPosition: 0)
+                    appLog("Buffer cleared after successful insert validation")
+                } else {
+                    appLog("Buffer kept - no valid text input target")
+                }
+            }
         } else {
             // Escape - buffer already saved above
             window?.orderOut(nil)
-            onDismiss?("")
+            onDismiss?("") { _ in }
         }
         appLog("dismiss() completed")
     }
@@ -456,7 +463,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
                     return nil
                 }
 
-                // Check for Cmd+Enter
+                // Check for Cmd+Enter (submit)
                 if nsEvent.modifierFlags.contains(.command) && nsEvent.keyCode == 36 {
                     appLog("eventTap: Cmd+Enter pressed, submitting")
                     DispatchQueue.main.async {

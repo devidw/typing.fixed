@@ -28,8 +28,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Create overlay window (hidden initially)
         overlayWindowController = OverlayWindowController()
-        overlayWindowController?.onDismiss = { [weak self] text in
-            self?.insertTextAndRestore(text)
+        overlayWindowController?.onDismiss = { [weak self] text, completion in
+            self?.insertTextAndRestore(text, completion: completion)
         }
 
         appLog("App launched. Log file: \(Logger.shared.logPath)")
@@ -152,11 +152,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func insertTextAndRestore(_ text: String) {
+    func insertTextAndRestore(_ text: String, completion: @escaping (Bool) -> Void) {
         guard !text.isEmpty else {
             restoreFocus()
+            completion(true) // Empty text is considered success
             return
         }
+
+        // Validate using stored element BEFORE restoring focus (no delay needed)
+        guard isValidTextInputTarget() else {
+            appLog("No valid text input target found - keeping buffer")
+            restoreFocus()
+            completion(false)
+            return
+        }
+
+        appLog("Valid text input target found - proceeding with paste")
+        completion(true) // Valid target, clear buffer
 
         // Put text on clipboard
         let pasteboard = NSPasteboard.general
@@ -168,7 +180,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Restore focus to previous app
         restoreFocus()
 
-        // Small delay to ensure app is focused
+        // Small delay to ensure app is focused before paste
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             // Simulate Cmd+V
             self.simulatePaste()
@@ -181,6 +193,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    func isValidTextInputTarget() -> Bool {
+        // Use stored element - check if it's still valid and is a text input
+        guard let element = previousFocusedElement else {
+            appLog("isValidTextInputTarget: No previous focused element")
+            return false
+        }
+
+        // Check if element still exists by getting its role
+        var roleRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+
+        guard result == .success, let role = roleRef as? String else {
+            appLog("isValidTextInputTarget: Element no longer valid (result: \(result.rawValue))")
+            return false
+        }
+
+        appLog("isValidTextInputTarget: Stored element role is '\(role)'")
+
+        // Roles that typically accept text input
+        let textInputRoles = [
+            "AXTextField",
+            "AXTextArea",
+            "AXSearchField",
+            "AXComboBox"
+        ]
+
+        if textInputRoles.contains(role) {
+            return true
+        }
+
+        // Also check if element is editable (for cases like terminal)
+        var editableRef: CFTypeRef?
+        let editableResult = AXUIElementCopyAttributeValue(element, "AXEditable" as CFString, &editableRef)
+        if editableResult == .success, let editable = editableRef as? Bool, editable {
+            appLog("isValidTextInputTarget: Element is editable")
+            return true
+        }
+
+        appLog("isValidTextInputTarget: Not a text input target")
+        return false
     }
 
     func restoreFocus() {
