@@ -15,7 +15,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     private var indicatorInnerShadow: NSView!
     private var appearanceObserver: NSObjectProtocol?
 
-    let fontSize: CGFloat = 24
+    let fontSize: CGFloat = NSFont.systemFontSize
 
     private var isDarkMode: Bool {
         NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
