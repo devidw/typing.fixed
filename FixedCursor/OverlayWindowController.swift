@@ -9,8 +9,30 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     private var runLoopSource: CFRunLoopSource?
     private var bufferManager = BufferManager()
     private var bufferIndicatorContainer: NSStackView!
+    private var textBackdrop: NSView!
+    private var textInnerShadow: NSView!
+    private var indicatorBackdrop: NSView!
+    private var indicatorInnerShadow: NSView!
+    private var appearanceObserver: NSObjectProtocol?
 
     let fontSize: CGFloat = 24
+
+    private var isDarkMode: Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    // Solarized colors (more saturated)
+    private var foregroundColor: NSColor {
+        isDarkMode
+            ? NSColor(red: 0.576, green: 0.631, blue: 0.631, alpha: 1) // brighter base0
+            : NSColor(red: 0.345, green: 0.431, blue: 0.459, alpha: 1) // darker base00
+    }
+
+    private var backgroundColor: NSColor {
+        isDarkMode
+            ? NSColor(red: 0.0, green: 0.141, blue: 0.180, alpha: 1)   // deeper teal
+            : NSColor(red: 0.988, green: 0.945, blue: 0.820, alpha: 1) // warmer cream
+    }
 
     convenience init() {
         let panel = OverlayPanel(
@@ -24,13 +46,135 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
 
         panel.level = .mainMenu + 1
         panel.isOpaque = false
-        panel.backgroundColor = NSColor.black.withAlphaComponent(0.85)
+        panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
 
+        setupBackdrops(in: panel)
         setupTextView(in: panel)
         setupBufferIndicator(in: panel)
+        setupAppearanceObserver()
+        updateAppearance()
+    }
+
+    private func setupAppearanceObserver() {
+        appearanceObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeOcclusionStateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateAppearance()
+        }
+    }
+
+    private func updateAppearance() {
+        let fg = foregroundColor
+        let bg = backgroundColor
+
+        textView?.textColor = fg
+        textView?.insertionPointColor = fg
+
+        textBackdrop?.layer?.backgroundColor = bg.cgColor
+        indicatorBackdrop?.layer?.backgroundColor = bg.cgColor
+
+        updateBufferIndicator()
+    }
+
+    private let shadowSize: CGFloat = 12
+
+    private func createInnerShadowView() -> NSView {
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 8
+        container.layer?.masksToBounds = true
+        return container
+    }
+
+    private func updateInnerShadowFrames(_ view: NSView) {
+        // Remove old sublayers
+        view.layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
+
+        let bounds = view.bounds
+        guard bounds.width > 0 && bounds.height > 0 else { return }
+
+        // Top shadow - fixed height, smooth gradient
+        let topShadow = CAGradientLayer()
+        topShadow.colors = [
+            NSColor.black.withAlphaComponent(0.3).cgColor,
+            NSColor.black.withAlphaComponent(0.15).cgColor,
+            NSColor.black.withAlphaComponent(0.05).cgColor,
+            NSColor.clear.cgColor
+        ]
+        topShadow.locations = [0, 0.15, 0.5, 1]
+        topShadow.startPoint = CGPoint(x: 0.5, y: 0)
+        topShadow.endPoint = CGPoint(x: 0.5, y: 1)
+        topShadow.frame = CGRect(x: 0, y: bounds.height - shadowSize, width: bounds.width, height: shadowSize)
+        view.layer?.addSublayer(topShadow)
+
+        // Left shadow - fixed width, smooth gradient
+        let leftShadow = CAGradientLayer()
+        leftShadow.colors = [
+            NSColor.black.withAlphaComponent(0.2).cgColor,
+            NSColor.black.withAlphaComponent(0.1).cgColor,
+            NSColor.black.withAlphaComponent(0.03).cgColor,
+            NSColor.clear.cgColor
+        ]
+        leftShadow.locations = [0, 0.15, 0.5, 1]
+        leftShadow.startPoint = CGPoint(x: 0, y: 0.5)
+        leftShadow.endPoint = CGPoint(x: 1, y: 0.5)
+        leftShadow.frame = CGRect(x: 0, y: 0, width: shadowSize, height: bounds.height)
+        view.layer?.addSublayer(leftShadow)
+
+        // Bottom highlight - fixed height, smooth gradient
+        let bottomHighlight = CAGradientLayer()
+        bottomHighlight.colors = [
+            NSColor.white.withAlphaComponent(0.15).cgColor,
+            NSColor.white.withAlphaComponent(0.08).cgColor,
+            NSColor.white.withAlphaComponent(0.02).cgColor,
+            NSColor.clear.cgColor
+        ]
+        bottomHighlight.locations = [0, 0.15, 0.5, 1]
+        bottomHighlight.startPoint = CGPoint(x: 0.5, y: 0)
+        bottomHighlight.endPoint = CGPoint(x: 0.5, y: 1)
+        bottomHighlight.frame = CGRect(x: 0, y: 0, width: bounds.width, height: shadowSize)
+        view.layer?.addSublayer(bottomHighlight)
+
+        // Right highlight - fixed width, smooth gradient
+        let rightHighlight = CAGradientLayer()
+        rightHighlight.colors = [
+            NSColor.white.withAlphaComponent(0.12).cgColor,
+            NSColor.white.withAlphaComponent(0.06).cgColor,
+            NSColor.white.withAlphaComponent(0.02).cgColor,
+            NSColor.clear.cgColor
+        ]
+        rightHighlight.locations = [0, 0.15, 0.5, 1]
+        rightHighlight.startPoint = CGPoint(x: 1, y: 0.5)
+        rightHighlight.endPoint = CGPoint(x: 0, y: 0.5)
+        rightHighlight.frame = CGRect(x: bounds.width - shadowSize, y: 0, width: shadowSize, height: bounds.height)
+        view.layer?.addSublayer(rightHighlight)
+    }
+
+    private func setupBackdrops(in panel: NSPanel) {
+        guard let contentView = panel.contentView else { return }
+
+        // Indicator backdrop - behind the buffer tabs
+        indicatorBackdrop = NSView()
+        indicatorBackdrop.wantsLayer = true
+        indicatorBackdrop.layer?.cornerRadius = 8
+        indicatorBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(indicatorBackdrop)
+
+        // Inner shadow for indicator (engraved look)
+        indicatorInnerShadow = createInnerShadowView()
+        indicatorInnerShadow.translatesAutoresizingMaskIntoConstraints = false
+        indicatorBackdrop.addSubview(indicatorInnerShadow)
+        NSLayoutConstraint.activate([
+            indicatorInnerShadow.topAnchor.constraint(equalTo: indicatorBackdrop.topAnchor),
+            indicatorInnerShadow.bottomAnchor.constraint(equalTo: indicatorBackdrop.bottomAnchor),
+            indicatorInnerShadow.leadingAnchor.constraint(equalTo: indicatorBackdrop.leadingAnchor),
+            indicatorInnerShadow.trailingAnchor.constraint(equalTo: indicatorBackdrop.trailingAnchor)
+        ])
     }
 
     private func setupTextView(in panel: NSPanel) {
@@ -71,6 +215,17 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         textView.defaultParagraphStyle = paragraphStyle
         textView.typingAttributes[.paragraphStyle] = paragraphStyle
 
+        // Text backdrop - positioned at contentView level, updated in repositionTextView
+        textBackdrop = NSView(frame: .zero)
+        textBackdrop.wantsLayer = true
+        textBackdrop.layer?.cornerRadius = 8
+
+        // Inner shadow for text (engraved look)
+        textInnerShadow = createInnerShadowView()
+        textInnerShadow.autoresizingMask = [.width, .height]
+        textBackdrop.addSubview(textInnerShadow)
+
+        contentView.addSubview(textBackdrop)
         containerView.addSubview(textView)
         contentView.addSubview(containerView)
     }
@@ -88,6 +243,14 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             bufferIndicatorContainer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             bufferIndicatorContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -40)
         ])
+
+        // Position indicator backdrop around the buffer tabs
+        NSLayoutConstraint.activate([
+            indicatorBackdrop.centerXAnchor.constraint(equalTo: bufferIndicatorContainer.centerXAnchor),
+            indicatorBackdrop.centerYAnchor.constraint(equalTo: bufferIndicatorContainer.centerYAnchor),
+            indicatorBackdrop.widthAnchor.constraint(equalTo: bufferIndicatorContainer.widthAnchor, constant: 24),
+            indicatorBackdrop.heightAnchor.constraint(equalTo: bufferIndicatorContainer.heightAnchor, constant: 16)
+        ])
     }
 
     private func updateBufferIndicator() {
@@ -101,6 +264,8 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         let current = bufferManager.currentIndex
         let size: CGFloat = 20
 
+        let fg = foregroundColor
+
         for i in 0..<count {
             let square = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
             square.wantsLayer = true
@@ -109,15 +274,15 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             label.stringValue = "\(i + 1)"
             label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
             label.alignment = .center
-            label.textColor = NSColor.white.withAlphaComponent(0.7)
+            label.textColor = fg.withAlphaComponent(0.7)
             label.isBordered = false
             label.isEditable = false
             label.drawsBackground = false
             label.backgroundColor = .clear
 
             if i == current {
-                square.layer?.borderColor = NSColor.white.withAlphaComponent(0.7).cgColor
-                square.layer?.borderWidth = 1
+                square.layer?.borderColor = fg.withAlphaComponent(0.7).cgColor
+                square.layer?.borderWidth = 2
             }
 
             square.addSubview(label)
@@ -156,9 +321,9 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         let cursorPos = bufferManager.activeBuffer?.cursorPosition ?? textView.string.count
         textView.setSelectedRange(NSRange(location: min(cursorPos, textView.string.count), length: 0))
 
-        // Initial positioning
+        // Initial positioning and appearance
+        updateAppearance()
         repositionTextView()
-        updateBufferIndicator()
 
         startInterceptingKeys()
         appLog("show() completed")
@@ -235,6 +400,46 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
 
         // Flip Y for NSView coordinates
         containerView.frame.origin = CGPoint(x: offsetX, y: windowFrame.height - offsetY - containerView.frame.height)
+
+        // Update text backdrop to match actual text content in screen coordinates
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        let padding: CGFloat = 20
+
+        // Calculate max line width based on actual text content
+        var maxLineWidth: CGFloat = 0
+        let glyphCount = layoutManager.numberOfGlyphs
+        if glyphCount > 0 {
+            var index = 0
+            while index < glyphCount {
+                var lineRange = NSRange()
+                layoutManager.lineFragmentRect(forGlyphAt: index, effectiveRange: &lineRange)
+                let lineBounds = layoutManager.boundingRect(forGlyphRange: lineRange, in: textContainer)
+                maxLineWidth = max(maxLineWidth, lineBounds.width)
+                index = NSMaxRange(lineRange)
+            }
+        }
+
+        let minWidth: CGFloat = 200
+        let minHeight = lineHeight + padding * 2
+        let backdropWidth = max(maxLineWidth + padding * 2, minWidth)
+        let backdropHeight = max(usedRect.height + padding * 2, minHeight)
+
+        // Convert text position to contentView coordinates
+        // The text starts at (0,0) in textView, which is at (0,0) in containerView
+        // containerView.frame.origin gives us the offset in contentView
+        let textOriginInContent = CGPoint(
+            x: containerView.frame.origin.x + usedRect.origin.x,
+            y: containerView.frame.origin.y + (containerView.frame.height - usedRect.origin.y - usedRect.height)
+        )
+
+        textBackdrop.frame = NSRect(
+            x: textOriginInContent.x - padding,
+            y: textOriginInContent.y - padding,
+            width: backdropWidth,
+            height: backdropHeight
+        )
+        textInnerShadow.frame = textBackdrop.bounds
+        updateInnerShadowFrames(textInnerShadow)
     }
 
     // MARK: - Buffer Operations
