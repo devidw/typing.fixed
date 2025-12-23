@@ -522,6 +522,11 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             window?.orderOut(nil)
             onDismiss?(text) { [weak self] success in
                 if success {
+                    // Copy to clipboard as backup before clearing
+                    if !text.isEmpty {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                    }
                     // Only clear buffer if insertion target was valid
                     self?.bufferManager.updateCurrentBuffer(content: "", cursorPosition: 0)
                     appLog("Buffer cleared after successful insert validation")
