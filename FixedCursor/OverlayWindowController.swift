@@ -107,8 +107,8 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
             NSColor.clear.cgColor
         ]
         topShadow.locations = [0, 0.15, 0.5, 1]
-        topShadow.startPoint = CGPoint(x: 0.5, y: 0)
-        topShadow.endPoint = CGPoint(x: 0.5, y: 1)
+        topShadow.startPoint = CGPoint(x: 0.5, y: 1)
+        topShadow.endPoint = CGPoint(x: 0.5, y: 0)
         topShadow.frame = CGRect(x: 0, y: bounds.height - shadowSize, width: bounds.width, height: shadowSize)
         view.layer?.addSublayer(topShadow)
 
@@ -129,9 +129,9 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         // Bottom highlight - fixed height, smooth gradient
         let bottomHighlight = CAGradientLayer()
         bottomHighlight.colors = [
-            NSColor.white.withAlphaComponent(0.15).cgColor,
-            NSColor.white.withAlphaComponent(0.08).cgColor,
-            NSColor.white.withAlphaComponent(0.02).cgColor,
+            NSColor.white.withAlphaComponent(0.25).cgColor,
+            NSColor.white.withAlphaComponent(0.12).cgColor,
+            NSColor.white.withAlphaComponent(0.04).cgColor,
             NSColor.clear.cgColor
         ]
         bottomHighlight.locations = [0, 0.15, 0.5, 1]
@@ -143,9 +143,9 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         // Right highlight - fixed width, smooth gradient
         let rightHighlight = CAGradientLayer()
         rightHighlight.colors = [
-            NSColor.white.withAlphaComponent(0.12).cgColor,
-            NSColor.white.withAlphaComponent(0.06).cgColor,
-            NSColor.white.withAlphaComponent(0.02).cgColor,
+            NSColor.white.withAlphaComponent(0.2).cgColor,
+            NSColor.white.withAlphaComponent(0.1).cgColor,
+            NSColor.white.withAlphaComponent(0.03).cgColor,
             NSColor.clear.cgColor
         ]
         rightHighlight.locations = [0, 0.15, 0.5, 1]

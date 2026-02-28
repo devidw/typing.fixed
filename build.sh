@@ -16,7 +16,7 @@ pkill -x "$APP_NAME" 2>/dev/null || true
 
 # Build
 echo "Building ($BUILD_CONFIG)..."
-swift build -c "$BUILD_CONFIG"
+swift build -c "$BUILD_CONFIG" --disable-sandbox
 
 # Remove existing app from Applications
 rm -rf "$INSTALL_PATH"
