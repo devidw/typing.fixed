@@ -14,6 +14,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     private var indicatorBackdrop: NSView!
     private var indicatorInnerShadow: NSView!
     private var appearanceObserver: NSObjectProtocol?
+    private var transparencyObserver: NSObjectProtocol?
 
     let fontSize: CGFloat = NSFont.systemFontSize
 
@@ -29,9 +30,13 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     }
 
     private var backgroundColor: NSColor {
-        isDarkMode
+        let base: NSColor = isDarkMode
             ? NSColor(red: 0.0, green: 0.141, blue: 0.180, alpha: 1)   // deeper teal
             : NSColor(red: 0.988, green: 0.945, blue: 0.820, alpha: 1) // warmer cream
+        // Honor the macOS "Reduce transparency" accessibility setting: stay fully
+        // opaque when it's enabled, otherwise let the overlay show 95% opacity.
+        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        return reduceTransparency ? base : base.withAlphaComponent(0.95)
     }
 
     convenience init() {
@@ -61,6 +66,15 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     private func setupAppearanceObserver() {
         appearanceObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeOcclusionStateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateAppearance()
+        }
+
+        // Re-apply opacity when the "Reduce transparency" setting changes.
+        transparencyObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
