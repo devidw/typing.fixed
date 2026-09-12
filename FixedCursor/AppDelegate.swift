@@ -35,6 +35,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appLog("App launched. Log file: \(Logger.shared.logPath)")
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        overlayWindowController?.focusTextInput()
+    }
+
     func setupMainMenu() {
         let mainMenu = NSMenu()
 

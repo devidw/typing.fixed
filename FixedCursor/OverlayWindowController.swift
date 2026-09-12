@@ -1,12 +1,12 @@
 import Cocoa
+import Carbon
 
 class OverlayWindowController: NSWindowController, NSTextViewDelegate {
     /// Callback when dismissing. Parameters: text to insert, completion handler (true = success, clear buffer)
     var onDismiss: ((String, @escaping (Bool) -> Void) -> Void)?
     private var textView: NSTextView!
     private var containerView: NSView!
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private var keyMonitor: Any?
     private var bufferManager = BufferManager()
     private var bufferIndicatorContainer: NSStackView!
     private var textBackdrop: NSView!
@@ -326,7 +326,11 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         repositionTextView()
 
         startInterceptingKeys()
-        appLog("show() completed")
+        // Activation can finish after the hotkey callback returns.
+        DispatchQueue.main.async { [weak self] in
+            self?.focusTextInput()
+        }
+        appLog("show() completed, secureInputEnabled: \(IsSecureEventInputEnabled())")
     }
 
     private func repositionTextView() {
@@ -578,176 +582,83 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         repositionTextView()
     }
 
-    // MARK: - CGEventTap
+    func focusTextInput() {
+        guard let window = window, window.isVisible, NSApp.isActive else { return }
+        window.makeKeyAndOrderFront(nil)
+        let focused = window.makeFirstResponder(textView)
+        appLog("Input focus: active=\(NSApp.isActive), key=\(window.isKeyWindow), textResponder=\(focused)")
+    }
+
+    // MARK: - App-local keyboard handling
 
     private func startInterceptingKeys() {
-        appLog("startInterceptingKeys() called, existing eventTap: \(String(describing: eventTap))")
+        stopInterceptingKeys()
+        // The overlay owns keyboard focus. A global CGEventTap can stop receiving
+        // keys under Secure Event Input, even when tap creation succeeds.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self, let window = self.window,
+                  window.isVisible, event.window === window else { return event }
+            return self.handleKeyDown(event)
+        }
+        appLog("Started local keyboard monitor")
+    }
 
-        let eventMask = (1 << CGEventType.keyDown.rawValue)
-
-        let userInfo = Unmanaged.passUnretained(self).toOpaque()
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: { (proxy, type, event, userInfo) -> Unmanaged<CGEvent>? in
-                guard let userInfo = userInfo else {
-                    appLog("eventTap callback: userInfo is nil")
-                    return Unmanaged.passRetained(event)
-                }
-
-                let controller = Unmanaged<OverlayWindowController>.fromOpaque(userInfo).takeUnretainedValue()
-
-                guard controller.window?.isVisible == true else {
-                    appLog("eventTap callback: window not visible, passing through")
-                    return Unmanaged.passRetained(event)
-                }
-
-                // Convert to NSEvent
-                guard let nsEvent = NSEvent(cgEvent: event) else {
-                    appLog("eventTap callback: failed to convert CGEvent to NSEvent")
-                    return Unmanaged.passRetained(event)
-                }
-
-                let keyCode = nsEvent.keyCode
-                let modifiers = nsEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                appLog("eventTap callback: keyCode=\(keyCode), modifiers=\(modifiers.rawValue)")
-
-                // Check for Escape
-                if nsEvent.keyCode == 53 {
-                    appLog("eventTap: Escape pressed, dismissing")
-                    DispatchQueue.main.async {
-                        controller.dismiss(insertText: false)
-                    }
-                    return nil
-                }
-
-                // Check for Ctrl+Tab (toggle hotkey)
-                if nsEvent.modifierFlags.contains(.control) && nsEvent.keyCode == 48 {
-                    appLog("eventTap: Ctrl+Tab pressed, dismissing")
-                    DispatchQueue.main.async {
-                        controller.dismiss(insertText: false)
-                    }
-                    return nil
-                }
-
-                // Check for Ctrl+T (new buffer)
-                if nsEvent.modifierFlags.contains(.control) && nsEvent.keyCode == 17 {
-                    appLog("eventTap: Ctrl+T pressed, creating new buffer")
-                    DispatchQueue.main.async {
-                        controller.createNewBuffer()
-                    }
-                    return nil
-                }
-
-                // Check for Ctrl+W (close buffer)
-                if nsEvent.modifierFlags.contains(.control) && nsEvent.keyCode == 13 {
-                    appLog("eventTap: Ctrl+W pressed, closing buffer")
-                    DispatchQueue.main.async {
-                        controller.closeCurrentBuffer()
-                    }
-                    return nil
-                }
-
-                // Check for Ctrl+1-9 (switch to specific buffer)
-                // Key codes: 1=18, 2=19, 3=20, 4=21, 5=23, 6=22, 7=26, 8=28, 9=25
-                if nsEvent.modifierFlags.contains(.control) {
-                    let numberKeyCodes: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
-                    if let bufferIndex = numberKeyCodes[nsEvent.keyCode] {
-                        appLog("eventTap: Ctrl+\(bufferIndex + 1) pressed, switching to buffer \(bufferIndex + 1)")
-                        DispatchQueue.main.async {
-                            controller.switchToBuffer(at: bufferIndex)
-                        }
-                        return nil
-                    }
-                }
-
-                // Check for Tab (switch buffer) - only Tab without modifiers
-                if nsEvent.keyCode == 48 && !nsEvent.modifierFlags.contains(.control) && !nsEvent.modifierFlags.contains(.command) && !nsEvent.modifierFlags.contains(.option) {
-                    appLog("eventTap: Tab pressed, switching buffer")
-                    DispatchQueue.main.async {
-                        controller.switchToNextBuffer()
-                    }
-                    return nil
-                }
-
-                // Check for Cmd+Enter (submit)
-                if nsEvent.modifierFlags.contains(.command) && nsEvent.keyCode == 36 {
-                    appLog("eventTap: Cmd+Enter pressed, submitting")
-                    DispatchQueue.main.async {
-                        controller.dismiss(insertText: true)
-                    }
-                    return nil
-                }
-
-                // Forward to textView on main thread
-                DispatchQueue.main.async {
-                    if nsEvent.modifierFlags.contains(.command) {
-                        // Handle Cmd shortcuts directly on textView
-                        switch nsEvent.keyCode {
-                        case 0:  // A - Select All
-                            controller.textView.selectAll(nil)
-                        case 6:  // Z - Undo/Redo
-                            if nsEvent.modifierFlags.contains(.shift) {
-                                controller.textView.undoManager?.redo()
-                            } else {
-                                controller.textView.undoManager?.undo()
-                            }
-                        case 7:  // X - Cut
-                            controller.textView.cut(nil)
-                        case 8:  // C - Copy
-                            controller.textView.copy(nil)
-                        case 9:  // V - Paste
-                            controller.textView.paste(nil)
-                        default:
-                            break
-                        }
-                    } else {
-                        controller.textView.keyDown(with: nsEvent)
-                    }
-                }
-
-                return nil // Consume event
-            },
-            userInfo: userInfo
-        ) else {
-            appLog("ERROR: Failed to create event tap!")
-            return
+    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        let modifiers = event.modifierFlags
+        switch event.keyCode {
+        case 53:
+            appLog("Local input: Escape, dismissing")
+            dismiss(insertText: false)
+            return nil
+        case 48 where modifiers.contains(.control):
+            dismiss(insertText: false)
+            return nil
+        case 17 where modifiers.contains(.control):
+            createNewBuffer()
+            return nil
+        case 13 where modifiers.contains(.control):
+            closeCurrentBuffer()
+            return nil
+        case 36 where modifiers.contains(.command), 76 where modifiers.contains(.command):
+            appLog("Local input: Command+Enter, submitting")
+            dismiss(insertText: true)
+            return nil
+        default:
+            break
         }
 
-        eventTap = tap
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-
-        if let source = runLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-            appLog("Added run loop source")
-        } else {
-            appLog("ERROR: Failed to create run loop source!")
+        if modifiers.contains(.control) {
+            let numberKeyCodes: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8]
+            if let bufferIndex = numberKeyCodes[event.keyCode] {
+                switchToBuffer(at: bufferIndex)
+                return nil
+            }
         }
 
-        CGEvent.tapEnable(tap: tap, enable: true)
-        appLog("startInterceptingKeys() completed, eventTap: \(String(describing: eventTap))")
+        if event.keyCode == 48 && modifiers.intersection([.control, .command, .option]).isEmpty {
+            switchToNextBuffer()
+            return nil
+        }
+
+        // Keep native text input, composition, and the Edit menu in the responder
+        // chain. Restore the editor if clicking the overlay moved focus away.
+        if window?.firstResponder !== textView {
+            window?.makeFirstResponder(textView)
+        }
+        if event.keyCode == 36 || event.keyCode == 76 {
+            appLog("Local input: Enter, passing to text view")
+        }
+        return event
     }
 
     private func stopInterceptingKeys() {
-        appLog("stopInterceptingKeys() called, eventTap: \(String(describing: eventTap)), runLoopSource: \(String(describing: runLoopSource))")
-
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            appLog("Disabled event tap")
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+            appLog("Stopped local keyboard monitor")
         }
-
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
-            appLog("Removed run loop source")
-        }
-
-        eventTap = nil
-        runLoopSource = nil
-        appLog("stopInterceptingKeys() completed")
     }
+
 }
 
 class OverlayPanel: NSPanel {
