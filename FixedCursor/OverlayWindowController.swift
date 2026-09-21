@@ -211,6 +211,7 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
 
         textView = NSTextView(frame: NSRect(x: 0, y: 0, width: screenFrame.width * 0.5, height: 10000), textContainer: textContainer)
         textView.isRichText = false
+        textView.allowsUndo = true
         textView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         textView.textColor = .white
         textView.backgroundColor = .clear
@@ -652,6 +653,37 @@ class OverlayWindowController: NSWindowController, NSTextViewDelegate {
         if event.keyCode == 48 && modifiers.intersection([.control, .command, .option]).isEmpty {
             switchToNextBuffer()
             return nil
+        }
+
+        // Standard Cmd shortcuts are applied directly to the editor. This is an
+        // LSUIElement app, so the Edit menu never becomes the active menu bar and
+        // its key equivalents are dropped before anything can act on them.
+        if modifiers.intersection([.command, .control, .option]) == [.command],
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            let shift = modifiers.contains(.shift)
+            switch key {
+            case "a" where !shift:
+                textView.selectAll(nil)
+                return nil
+            case "c" where !shift:
+                textView.copy(nil)
+                return nil
+            case "x" where !shift:
+                textView.cut(nil)
+                return nil
+            case "v":
+                textView.paste(nil)
+                return nil
+            case "z":
+                if shift {
+                    textView.undoManager?.redo()
+                } else {
+                    textView.undoManager?.undo()
+                }
+                return nil
+            default:
+                break
+            }
         }
 
         // Keep native text input, composition, and the Edit menu in the responder
